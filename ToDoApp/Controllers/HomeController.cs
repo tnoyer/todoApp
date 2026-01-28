@@ -1,32 +1,112 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using ToDoApp.Context;
 using ToDoApp.Models;
 
 namespace ToDoApp.Controllers
 {
     public class HomeController : Controller
     {
-        private readonly ILogger<HomeController> _logger;
+        private ToDoContext context;
 
-        public HomeController(ILogger<HomeController> logger)
+        public HomeController(ToDoContext ctx)
         {
-            _logger = logger;
+            context = ctx;
         }
 
-        public IActionResult Index()
+        public IActionResult Index(string id)
         {
-            return View();
+            var filters = new Filters(id);
+            ViewBag.Filters = filters;
+            ViewBag.Categories = context.Categories.ToList();
+            ViewBag.Statuses = context.Statuses.ToList();
+            ViewBag.DueFilterValues = Filters.DueFilterValues;
+            IQueryable<ToDo> query = context.ToDos
+                .Include(t => t.Category)
+                .Include(t => t.Status);
+            if (filters.HasCategory)
+            {
+                query = query.Where(t => t.CategoryId == filters.CategoryId);
+            }
+            if (filters.HasDue)
+            {
+                if (filters.IsPast)
+                {
+                    query = query.Where(t => t.DueDate < DateTime.Today);
+                }
+                else if (filters.IsToday)
+                {
+                    query = query.Where(t => t.DueDate == DateTime.Today);
+                }
+                else if (filters.IsFuture)
+                {
+                    query = query.Where(t => t.DueDate > DateTime.Today);
+                }
+            }
+            if (filters.HasStatus)
+            {
+                query = query.Where(t => t.StatusId == filters.StatusId);
+            }
+            var tasks = query.OrderBy(t => t.DueDate).ToList();
+            return View(tasks);
         }
 
-        public IActionResult Privacy()
+        [HttpGet]
+        public IActionResult Add()
         {
-            return View();
+            ViewBag.Categories = context.Categories.ToList();
+            ViewBag.Statuses = context.Statuses.ToList();
+            var tasks = new ToDo { StatusId = "open" };
+            return View(tasks);
         }
 
-        [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
-        public IActionResult Error()
+        [HttpPost]
+        public IActionResult Add(ToDo task)
         {
-            return View(new ErrorViewModel { RequestId = Activity.Current?.Id ?? HttpContext.TraceIdentifier });
+            if (ModelState.IsValid)
+            {
+                context.ToDos.Add(task);
+                context.SaveChanges();
+                return RedirectToAction("Index");
+            }
+            else
+            {
+                ViewBag.Categories = context.Categories.ToList();
+                ViewBag.Statuses = context.Statuses.ToList();
+                return View(task);
+            }
+        }
+
+        [HttpPost]
+        public IActionResult Filter(string[] filter)
+        {
+            string id = string.Join("-", filter);
+            return RedirectToAction("Index", new { ID = id });
+        }
+
+        [HttpPost]
+        public IActionResult MarkComplete([FromRoute] string id, ToDo selected)
+        {
+            selected = context.ToDos.Find(selected.Id)!;
+            if (selected != null)
+            {
+                selected.StatusId = "closed";
+                context.SaveChanges();
+            }
+            return RedirectToAction("Index", new { ID = id });
+        }
+
+        [HttpPost]
+        public IActionResult DeleteComplete(string id)
+        {
+            var completedTasks = context.ToDos.Where(t => t.StatusId == "closed").ToList();
+            foreach (var task in completedTasks)
+            {
+                context.ToDos.Remove(task);
+            }
+            context.SaveChanges();
+            return RedirectToAction("Index", new { ID = id });
         }
     }
 }
